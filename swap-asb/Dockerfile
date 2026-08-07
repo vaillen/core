@@ -72,6 +72,13 @@ FROM toolchain AS builder
 # the later cargo build, otherwise cook's cache is invalidated.
 ENV CARGO_PROFILE_RELEASE_DEBUG=1
 
+# CI fork patch: cap peak memory for low-RAM build hosts. monero-sys links a
+# large static C++ lib into the final Rust binary; with debug info enabled
+# and cargo's default parallelism, that link step alone was OOM-killed on a
+# ~3.7GB host (rustc RSS ~3.2GB at the moment it was killed). Building one
+# crate at a time trades build time for a much lower memory ceiling.
+ENV CARGO_BUILD_JOBS=1
+
 # Build just the external dependencies first
 COPY --from=planner /recipe.json recipe.json
 
