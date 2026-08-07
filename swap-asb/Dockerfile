@@ -31,6 +31,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     lbzip2 \
     gperf \
     libglib2.0-dev \
+    mold \
     # Left out as we are not compiling for Windows in this Dockerfile
     # mingw-w64-x86-64 \
     && apt-get clean \
@@ -67,17 +68,22 @@ RUN cargo chef prepare --recipe-path recipe.json
 # Now we build the application
 FROM toolchain AS builder
 
-# Enable debug info in release builds for stack traces and perf.
+# Upstream enables debug info in release builds for stack traces and perf.
 # Must be set before cargo chef cook so the profile fingerprint matches
 # the later cargo build, otherwise cook's cache is invalidated.
-ENV CARGO_PROFILE_RELEASE_DEBUG=1
-
-# CI fork patch: cap peak memory for low-RAM build hosts. monero-sys links a
-# large static C++ lib into the final Rust binary; with debug info enabled
-# and cargo's default parallelism, that link step alone was OOM-killed on a
-# ~3.7GB host (rustc RSS ~3.2GB at the moment it was killed). Building one
-# crate at a time trades build time for a much lower memory ceiling.
-ENV CARGO_BUILD_JOBS=1
+#
+# CI fork patch: disabled here, and linking through `mold` instead of the
+# default `ld`. Linking swap-asb pulls in monero-sys's large static C++ lib;
+# on a low-RAM build host that single link step was repeatedly killed
+# (OOM-killed by the kernel on a 3.7GB VPS; SIGTERM'd, likely by
+# systemd-oomd's memory-pressure reaper or a >10-minutes-silent-output
+# timeout, on an 8GB GitHub Actions runner). `mold` uses substantially less
+# memory and wall-clock time than `ld`/`lld` for large Rust binaries.
+# Debug info only affects stack traces/perf symbols at runtime, not
+# behavior — an acceptable trade here. Revert both if traces matter and the
+# build host has enough headroom.
+ENV CARGO_PROFILE_RELEASE_DEBUG=0
+ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 
 # Build just the external dependencies first
 COPY --from=planner /recipe.json recipe.json
